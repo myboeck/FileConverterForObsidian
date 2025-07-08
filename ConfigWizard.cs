@@ -44,7 +44,6 @@ namespace ObsidianGitMirror
                         {
                             "Set Repository Folder",
                             "Set Vault Folder",
-                            "Clear Extensions",
                             "Save and Exit",
                             "Cancel"
                         }));
@@ -72,35 +71,9 @@ namespace ObsidianGitMirror
                 }
                 else if (choice == "Save and Exit")
                 {
-                    // Standard-Extensions einfügen, wenn leer
-                    if (config.AcceptedExtensions == null || config.AcceptedExtensions.Count == 0)
-                    {
-                        config.AcceptedExtensions = Program.DefaultExtensions;
-                    }
-
                     File.WriteAllText(configPath, JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
                     AnsiConsole.MarkupLine("\n[green]✅ Configuration saved.[/]");
                     break;
-                }
-                else if (choice == "Clear Extensions")
-                {
-                    if (config.AcceptedExtensions?.Count > 0)
-                    {
-                        var confirm = AnsiConsole.Confirm("[yellow]⚠️ Really clear all accepted extensions?[/]", false);
-                        if (confirm)
-                        {
-                            config.AcceptedExtensions.Clear();
-                            AnsiConsole.MarkupLine("[green]✅ Extensions list has been cleared.[/]");
-                        }
-                        else
-                        {
-                            AnsiConsole.MarkupLine("[grey]No changes made.[/]");
-                        }
-                    }
-                    else
-                    {
-                        AnsiConsole.MarkupLine("[grey]No extensions defined yet.[/]");
-                    }
                 }
 
                 AnsiConsole.MarkupLine("\n[grey]Press Enter to return to menu...[/]");
