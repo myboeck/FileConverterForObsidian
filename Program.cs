@@ -17,12 +17,13 @@ namespace ObsidianGitMirror
         [STAThread]
         static void Main(string[] args)
         {
+            bool running = true;
             Console.WriteLine("👀 GitToObsidianSync gestartet…");
 
             ConfigModel? config = null;
             string headLogPath = "";
 
-            while (true)
+            while (running)
             {
                 ConfigWizard.Run(_configPath!);
 
@@ -80,8 +81,44 @@ namespace ObsidianGitMirror
 
             watcher.EnableRaisingEvents = true;
 
-            Console.WriteLine("⏳ Warte auf Commits... Drücke [Enter] zum Beenden.");
-            Console.ReadLine();
+            Console.WriteLine("⏳ Warte auf Commits...");
+            Console.WriteLine("✴ Drücke [Ctrl]+K gefolgt von [S] für Sync oder [Q] zum Beenden.");
+
+            bool awaitingCombo = false;
+
+            while (running)
+            {
+                var keyInfo = Console.ReadKey(intercept: true);
+
+                if (!awaitingCombo)
+                {
+                    // Warte auf Ctrl+K
+                    if (keyInfo.Key == ConsoleKey.K && keyInfo.Modifiers.HasFlag(ConsoleModifiers.Control))
+                    {
+                        awaitingCombo = true;
+                        Console.Write("(K) ➝ ");
+                    }
+                }
+                else
+                {
+                    awaitingCombo = false;
+
+                    if (keyInfo.Key == ConsoleKey.S)
+                    {
+                        Console.WriteLine("🧠 Manuelle Synchronisierung wird ausgeführt...");
+                        TriggerPipeline(config!);
+                    }
+                    else if (keyInfo.Key == ConsoleKey.Q)
+                    {
+                        running = false;
+                        break;
+                    }
+                    else
+                    {
+                        Console.WriteLine("⛔ Ungültige Tastenkombination. Drücke [Ctrl]+K gefolgt von [S] oder [Q].");
+                    }
+                }
+            }
         }
 
 
@@ -121,6 +158,8 @@ namespace ObsidianGitMirror
             }
 
             Console.WriteLine($"✅ {changedFiles.Count} Datei(en) verarbeitet in {patchIndex - 1} Patch(es).");
+            Console.WriteLine("⏳ Warte auf Commits...");
+            Console.WriteLine("✴ Drücke [Ctrl]+K gefolgt von [S] für Sync oder [Q] zum Beenden.");
         }
 
         static void ProcessPatch(ConfigModel config, List<string> files, DataConverter converter, DataWriter writer, string repoPath, int patchNumber)
