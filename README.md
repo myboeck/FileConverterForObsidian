@@ -3,7 +3,7 @@
 📦 Download
 Navigiere zur Releases-Seite dieses Repos.
 
-Lade die ZIP-Datei für dein Betriebssystem herunter (z. B. GitToObsidianSync-win-x64.zip).
+Lade die ZIP-Datei herunter (derzeit nur windows unterstützt).
 
 Entpacke den Ordner an einen beliebigen Ort auf deinem Rechner (z. B. C:\Tools\GitToObsidianSync\).
 
@@ -49,3 +49,17 @@ Text: .txt, .md
 
 Office: .docx, .xlsx
 (Excel-Zeilen werden in einzelne Markdown-Dateien mit YAML-Frontmatter konvertiert)
+
+🤝 Weiterentwicklung
+Dieses Projekt ist für meinen persönlichen Anwendungsfall vollständig – es erfüllt exakt, was ich brauche.
+Aber: Wenn du Lust hast, daran weiterzuarbeiten, neue Features hinzuzufügen oder es auf andere Szenarien anzupassen, fühl dich herzlich eingeladen!
+
+Ich freue mich über:
+
+Pull Requests 💡
+
+Verbesserungsvorschläge 🛠
+
+oder Forks mit eigenen Erweiterungen 🚀
+
+Gemeinsam statt einsam – der Code gehört der Community. ✨
