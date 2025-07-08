@@ -44,12 +44,8 @@ namespace ObsidianGitMirror
                         {
                             "Set Repository Folder",
                             "Set Vault Folder",
-                            "Save and Exit",
-                            "Cancel"
+                            "Save and Exit"
                         }));
-
-                if (choice == "Cancel")
-                    break;
 
                 if (choice == "Set Repository Folder")
                 {
