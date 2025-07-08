@@ -1,4 +1,5 @@
 ﻿using Spectre.Console;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace ObsidianGitMirror
@@ -9,10 +10,10 @@ namespace ObsidianGitMirror
         private static DateTime _lastProcessedCommit = DateTime.MinValue;
         const long PATCH_LIMIT_BYTES = 4L * 1024 * 1024 * 1024; // 4 GB
         public static readonly List<string> DefaultExtensions = new()
-    {
-        ".cs", ".py", ".js", ".java", ".ts", ".html", ".css",
-        ".md", ".txt", ".json", ".cpp", ".c", ".xlsx", ".docx"
-    };
+        {
+            ".cs", ".py", ".js", ".java", ".ts", ".html", ".css",
+            ".md", ".txt", ".json", ".cpp", ".c", ".xlsx", ".docx"
+        };
 
         [STAThread]
         static void Main(string[] args)
@@ -82,7 +83,7 @@ namespace ObsidianGitMirror
             watcher.EnableRaisingEvents = true;
 
             Console.WriteLine("⏳ Warte auf Commits...");
-            Console.WriteLine("✴ Drücke [Ctrl]+K gefolgt von [S] für Sync oder [Q] zum Beenden.");
+            Console.WriteLine("✴ Drücke [Ctrl]+K gefolgt von [S] für Sync, [I] für Full Sync, oder [Q] zum Beenden.");
 
             bool awaitingCombo = false;
 
@@ -108,6 +109,11 @@ namespace ObsidianGitMirror
                         Console.WriteLine("🧠 Manuelle Synchronisierung wird ausgeführt...");
                         TriggerPipeline(config!);
                     }
+                    else if (keyInfo.Key == ConsoleKey.I)
+                    {
+                        Console.WriteLine("🚀 Starte Vollständige Repository-Synchronisierung (alle Dateien)...");
+                        SyncAllFilesInRepo(config!);
+                    }
                     else if (keyInfo.Key == ConsoleKey.Q)
                     {
                         running = false;
@@ -115,25 +121,33 @@ namespace ObsidianGitMirror
                     }
                     else
                     {
-                        Console.WriteLine("⛔ Ungültige Tastenkombination. Drücke [Ctrl]+K gefolgt von [S] oder [Q].");
+                        Console.WriteLine("⛔ Ungültige Tastenkombination. Drücke [Ctrl]+K gefolgt von [S], [I] oder [Q].");
                     }
                 }
             }
         }
 
-
         static void TriggerPipeline(ConfigModel config)
         {
             var receiver = new DataReceiver(_configPath!);
-            var converter = new DataConverter();
-            var writer = new DataWriter(config.VaultOutputPath);
-
             var changedFiles = receiver.GetChangedFiles();
+
+            if (changedFiles.Count == 0)
+            {
+                Console.WriteLine("ℹ️ Keine Änderungen gefunden.");
+                Console.WriteLine("⏳ Warte auf Commits...");
+                Console.WriteLine("✴ Drücke [Ctrl]+K gefolgt von [S], [I] oder [Q].");
+                return;
+            }
+
             var patchLimitBytes = PATCH_LIMIT_BYTES;
 
             var patch = new List<string>();
             long currentPatchSize = 0;
             int patchIndex = 1;
+
+            var converter = new DataConverter();
+            var writer = new DataWriter(config.VaultOutputPath);
 
             foreach (var file in changedFiles)
             {
@@ -142,42 +156,48 @@ namespace ObsidianGitMirror
 
                 if ((currentPatchSize + fileSize) > patchLimitBytes && patch.Any())
                 {
-                    ProcessPatch(config, patch, converter, writer, config.RepositoryPath, patchIndex++);
+                    Console.WriteLine($"\n📦 Patch #{patchIndex} – Verarbeite {patch.Count} Dateien...");
+                    SyncFiles(patch, config);
                     patch.Clear();
                     currentPatchSize = 0;
+                    patchIndex++;
                 }
 
                 patch.Add(file);
                 currentPatchSize += fileSize;
             }
 
-            // Letzten Patch verarbeiten
             if (patch.Any())
             {
-                ProcessPatch(config, patch, converter, writer, config.RepositoryPath, patchIndex++);
+                Console.WriteLine($"\n📦 Patch #{patchIndex} – Verarbeite {patch.Count} Dateien...");
+                SyncFiles(patch, config);
             }
 
-            Console.WriteLine($"✅ {changedFiles.Count} Datei(en) verarbeitet in {patchIndex - 1} Patch(es).");
+            Console.WriteLine($"✅ {changedFiles.Count} Datei(en) verarbeitet in {patchIndex} Patch(es).");
             Console.WriteLine("⏳ Warte auf Commits...");
-            Console.WriteLine("✴ Drücke [Ctrl]+K gefolgt von [S] für Sync oder [Q] zum Beenden.");
+            Console.WriteLine("✴ Drücke [Ctrl]+K gefolgt von [S], [I] oder [Q].");
         }
 
-        static void ProcessPatch(ConfigModel config, List<string> files, DataConverter converter, DataWriter writer, string repoPath, int patchNumber)
+        /// <summary>
+        /// Universelle Methode zum Synchronisieren einzelner Dateien
+        /// </summary>
+        static void SyncFiles(List<string> files, ConfigModel config)
         {
-            Console.WriteLine($"\n📦 Patch #{patchNumber} – {files.Count} Datei(en) werden verarbeitet…");
+            var converter = new DataConverter();
+            var writer = new DataWriter(config.VaultOutputPath);
 
+            int fileIndex = 0;
             foreach (var filePath in files)
             {
+                fileIndex++;
                 try
                 {
                     var ext = Path.GetExtension(filePath).ToLowerInvariant();
 
-                    // Prüfe, ob die Datei überhaupt geöffnet werden kann
                     if (IsFileLocked(filePath, out string errorMessage))
                     {
-                        Console.WriteLine($"[🔒 Gesperrt] Datei {filePath} konnte nicht geöffnet werden.");
-                        Console.WriteLine(errorMessage);
-                        continue; // zur nächsten Datei springen
+                        Console.WriteLine($"[🔒 Gesperrt] Datei {filePath} konnte nicht geöffnet werden: {errorMessage}");
+                        continue;
                     }
 
                     if (converter.IsExcel(ext))
@@ -201,8 +221,26 @@ namespace ObsidianGitMirror
                 }
             }
 
-            GC.Collect(); // Optional: Speicher aufräumen
-            Console.WriteLine($"✅ Patch #{patchNumber} abgeschlossen.");
+            GC.Collect();
+            Console.WriteLine("✅ Synchronisierung abgeschlossen.");
+        }
+
+        /// <summary>
+        /// Komplettes Repository durchsuchen und alle unterstützten Dateien synchronisieren
+        /// </summary>
+        static void SyncAllFilesInRepo(ConfigModel config)
+        {
+            var repoPath = config.RepositoryPath;
+
+            var allFiles = Directory.EnumerateFiles(repoPath, "*.*", SearchOption.AllDirectories)
+                .Where(file => DefaultExtensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
+                .ToList();
+
+            Console.WriteLine($"🌍 {allFiles.Count} unterstützte Dateien gefunden.");
+
+            SyncFiles(allFiles, config);
+
+            Console.WriteLine("✅ Vollständige Repository-Synchronisierung abgeschlossen.");
         }
 
         public static bool IsFileLocked(string filePath, out string reason)
