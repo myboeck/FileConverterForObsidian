@@ -13,8 +13,8 @@ namespace ObsidianGitMirror
             var configJson = File.ReadAllText(configPath);
             var config = JsonSerializer.Deserialize<ConfigModel>(configJson)!;
             _repoPath = config.RepositoryPath;
-            _extensions = config.AcceptedExtensions != null
-                ? new HashSet<string>(config.AcceptedExtensions, StringComparer.OrdinalIgnoreCase)
+            _extensions = Program.DefaultExtensions != null
+                ? new HashSet<string>(Program.DefaultExtensions, StringComparer.OrdinalIgnoreCase)
                 : new HashSet<string>();
         }
 

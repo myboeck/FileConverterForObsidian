@@ -25,9 +25,9 @@ namespace ObsidianGitMirror
 
                 AnsiConsole.MarkupLine($"[grey]Extensions:[/]");
 
-                if (config.AcceptedExtensions is { Count: > 0 })
+                if (Program.DefaultExtensions is { Count: > 0 })
                 {
-                    foreach (var ext in config.AcceptedExtensions)
+                    foreach (var ext in Program.DefaultExtensions)
                     {
                         AnsiConsole.MarkupLine($"  • [blue]{ext}[/]");
                     }
