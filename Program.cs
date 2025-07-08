@@ -1,124 +1,186 @@
 ﻿using Spectre.Console;
-using System;
-using System.IO;
-using System.Windows.Forms;
+using System.Text.Json;
 
-namespace FileConverter
+namespace ObsidianGitMirror
 {
     internal class Program
     {
-        static string FolderPath = "";
+        private static string? _configPath = "config.json";
+        private static DateTime _lastProcessedCommit = DateTime.MinValue;
+        const long PATCH_LIMIT_BYTES = 4L * 1024 * 1024 * 1024; // 4 GB
+        public static readonly List<string> DefaultExtensions = new()
+    {
+        ".cs", ".py", ".js", ".java", ".ts", ".html", ".css",
+        ".md", ".txt", ".json", ".cpp", ".c", ".xlsx", ".docx"
+    };
 
         [STAThread]
         static void Main(string[] args)
         {
-            var converter = new DataConverter();
+            Console.WriteLine("👀 GitToObsidianSync gestartet…");
+
+            ConfigModel? config = null;
+            string headLogPath = "";
 
             while (true)
             {
-                AnsiConsole.Clear();
-                AnsiConsole.Write(
-                    new FigletText("File → MD")
-                        .Centered()
-                        .Color(Spectre.Console.Color.Green));
+                ConfigWizard.Run(_configPath!);
 
-                AnsiConsole.MarkupLine($"[grey]Current working folder: {(string.IsNullOrWhiteSpace(FolderPath) ? "[red]Not set[/]" : $"[blue]{FolderPath}[/]")}[/]");
-
-                var choice = AnsiConsole.Prompt(
-                    new SelectionPrompt<string>()
-                        .Title("\n[yellow]Select an option[/]:")
-                        .AddChoices(new[]
-                        {
-                            "Select Work Folder",
-                            "Create Markdown project from folder",
-                            "Exit"
-                        }));
-
-                if (choice == "Exit")
-                    break;
-
-                if (choice == "Select Work Folder")
+                try
                 {
-                    var selectedFolder = BrowseFolderDialog();
-                    if (!string.IsNullOrWhiteSpace(selectedFolder))
-                    {
-                        FolderPath = selectedFolder;
-                        AnsiConsole.MarkupLine($"[green]✅ Folder path set to:[/] [blue]{FolderPath}[/]");
-                    }
-                    else
-                    {
-                        AnsiConsole.MarkupLine($"[red]No folder selected.[/]");
-                    }
-                }
-                else if (choice == "Create Markdown project from folder")
-                {
-                    string folderToConvert = FolderPath;
+                    var configJson = File.ReadAllText(_configPath!);
+                    config = JsonSerializer.Deserialize<ConfigModel>(configJson)!;
 
-                    if (string.IsNullOrWhiteSpace(folderToConvert))
+                    if (string.IsNullOrWhiteSpace(config.RepositoryPath) || !Directory.Exists(config.RepositoryPath))
                     {
-                        AnsiConsole.MarkupLine("[red]No working folder selected. Please select one first.[/]");
-                        AnsiConsole.MarkupLine("[grey]Press Enter to return to menu...[/]");
+                        AnsiConsole.MarkupLine("[red]❌ Repository path not set or does not exist.[/]");
+                        AnsiConsole.MarkupLine("[grey]Drücke [underline]Enter[/] um fortzufahren...[/]");
                         Console.ReadLine();
                         continue;
                     }
 
-                    if (!Directory.Exists(folderToConvert))
+                    headLogPath = Path.Combine(config.RepositoryPath, ".git", "logs", "HEAD");
+                    if (!File.Exists(headLogPath))
                     {
-                        AnsiConsole.MarkupLine($"[red]Folder does not exist:[/] {folderToConvert}");
+                        AnsiConsole.MarkupLine($"[red]❌ Kein gültiges Git-Repository gefunden unter:[/] [blue]{config.RepositoryPath}[/]");
+                        AnsiConsole.MarkupLine("[grey]Drücke [underline]Enter[/] um fortzufahren...[/]");
+                        Console.ReadLine();
                         continue;
                     }
 
-                    try
-                    {
-                        AnsiConsole.Status()
-                            .Spinner(Spinner.Known.Dots)
-                            .Start("Converting files...", ctx =>
-                            {
-                                converter.ConvertFolder(folderToConvert);
-                            });
+                    break; // Alles ok
+                }
+                catch (Exception ex)
+                {
+                    AnsiConsole.MarkupLine($"[red]❌ Fehler beim Laden der config.json:[/] {ex.Message}");
+                    AnsiConsole.MarkupLine("[grey]Drücke [underline]Enter[/] um fortzufahren...[/]");
+                    Console.ReadLine();
+                    continue;
+                }
+            }
 
-                        AnsiConsole.MarkupLine("\n[bold green]Conversion process finished.[/]");
+            // Watcher initialisieren
+            using var watcher = new FileSystemWatcher(Path.GetDirectoryName(headLogPath)!);
+            watcher.Filter = "HEAD";
+            watcher.NotifyFilter = NotifyFilters.LastWrite;
+
+            watcher.Changed += (sender, e) =>
+            {
+                Thread.Sleep(100);
+
+                var commitTime = File.GetLastWriteTime(headLogPath);
+                if (commitTime <= _lastProcessedCommit)
+                    return;
+
+                _lastProcessedCommit = commitTime;
+                Console.WriteLine($"\n🔁 Commit erkannt ({commitTime}) – starte Verarbeitung…");
+
+                TriggerPipeline(config!);
+            };
+
+            watcher.EnableRaisingEvents = true;
+
+            Console.WriteLine("⏳ Warte auf Commits... Drücke [Enter] zum Beenden.");
+            Console.ReadLine();
+        }
+
+
+        static void TriggerPipeline(ConfigModel config)
+        {
+            var receiver = new DataReceiver(_configPath!);
+            var converter = new DataConverter();
+            var writer = new DataWriter(config.VaultOutputPath);
+
+            var changedFiles = receiver.GetChangedFiles();
+            var patchLimitBytes = PATCH_LIMIT_BYTES;
+
+            var patch = new List<string>();
+            long currentPatchSize = 0;
+            int patchIndex = 1;
+
+            foreach (var file in changedFiles)
+            {
+                var fileInfo = new FileInfo(file);
+                long fileSize = fileInfo.Exists ? fileInfo.Length : 0;
+
+                if ((currentPatchSize + fileSize) > patchLimitBytes && patch.Any())
+                {
+                    ProcessPatch(config, patch, converter, writer, config.RepositoryPath, patchIndex++);
+                    patch.Clear();
+                    currentPatchSize = 0;
+                }
+
+                patch.Add(file);
+                currentPatchSize += fileSize;
+            }
+
+            // Letzten Patch verarbeiten
+            if (patch.Any())
+            {
+                ProcessPatch(config, patch, converter, writer, config.RepositoryPath, patchIndex++);
+            }
+
+            Console.WriteLine($"✅ {changedFiles.Count} Datei(en) verarbeitet in {patchIndex - 1} Patch(es).");
+        }
+
+        static void ProcessPatch(ConfigModel config, List<string> files, DataConverter converter, DataWriter writer, string repoPath, int patchNumber)
+        {
+            Console.WriteLine($"\n📦 Patch #{patchNumber} – {files.Count} Datei(en) werden verarbeitet…");
+
+            foreach (var filePath in files)
+            {
+                try
+                {
+                    var ext = Path.GetExtension(filePath).ToLowerInvariant();
+
+                    // Prüfe, ob die Datei überhaupt geöffnet werden kann
+                    if (IsFileLocked(filePath, out string errorMessage))
+                    {
+                        Console.WriteLine($"[🔒 Gesperrt] Datei {filePath} konnte nicht geöffnet werden.");
+                        Console.WriteLine(errorMessage);
+                        continue; // zur nächsten Datei springen
                     }
-                    catch (Exception ex)
-                    {
-                        AnsiConsole.MarkupLine($"[red]An error occurred during conversion:[/] {ex.Message}");
-                        AnsiConsole.WriteException(ex);
-                        continue;
-                    }
 
-                    if (converter.SkippedFiles.Count > 0)
+                    if (converter.IsExcel(ext))
                     {
-                        AnsiConsole.MarkupLine("\n[bold yellow]⚠️ The following files were skipped (unsupported format or error):[/]");
-                        var table = new Table().Border(TableBorder.Rounded);
-                        table.AddColumn("Skipped Files");
-
-                        foreach (var file in converter.SkippedFiles)
+                        var excelFiles = converter.ConvertExcelToMarkdown(filePath);
+                        foreach (var (relPath, md) in excelFiles)
                         {
-                            table.AddRow(file);
+                            writer.WriteMarkdownFile(relPath, md);
                         }
-                        AnsiConsole.Write(table);
                     }
                     else
                     {
-                        AnsiConsole.MarkupLine("\n[green]✅ All supported files converted successfully.[/]");
+                        var relPath = Path.GetRelativePath(config.RepositoryPath, filePath);
+                        var (mdContent, _) = converter.ConvertToMarkdown(filePath);
+                        writer.WriteMarkdownFile(relPath, mdContent);
                     }
                 }
-
-                AnsiConsole.MarkupLine("\n[grey]Press Enter to return to menu...[/]");
-                Console.ReadLine();
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Fehler] Datei {filePath} konnte nicht verarbeitet werden: {ex.Message}");
+                }
             }
+
+            GC.Collect(); // Optional: Speicher aufräumen
+            Console.WriteLine($"✅ Patch #{patchNumber} abgeschlossen.");
         }
 
-        private static string? BrowseFolderDialog()
+        public static bool IsFileLocked(string filePath, out string reason)
         {
-            using var dialog = new FolderBrowserDialog
+            try
             {
-                Description = "Select the working folder",
-                UseDescriptionForTitle = true,
-                ShowNewFolderButton = true
-            };
-
-            return dialog.ShowDialog() == DialogResult.OK ? dialog.SelectedPath : null;
+                using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.None))
+                {
+                    reason = "";
+                    return false;
+                }
+            }
+            catch (IOException ex)
+            {
+                reason = ex.Message;
+                return true;
+            }
         }
     }
 }

@@ -1,0 +1,5 @@
+{
+  "RepositoryPath": "",
+  "VaultOutputPath": "",
+  "AcceptedExtensions": [ ".cs", ".py", ".js", ".java", ".ts", ".html", ".css", ".md", ".txt", ".json", ".cpp", ".c", ".docx", ".xlsx" ]
+}
