@@ -1,4 +1,4 @@
-# FileConverterForObsidian
+# ObsidianGitMirror
 🚀 GitToObsidianSync – Download & Verwendung
 📦 Download
 Navigiere zur Releases-Seite dieses Repos.
